@@ -23,6 +23,8 @@ local USER_AGENT = `Dekkonot/Lune-OpenCloud-Execution 0.0.0; {_VERSION}`
 
 local RATE_LIMIT_HEADER = "x-ratelimit-reset"
 
+local ID_PATTERN = "([%w%-]+)/tasks/([%w%-]+)$"
+
 local api_key_override: string?
 
 local function api_key(): string
@@ -276,10 +278,55 @@ function luau_execute.create_task_latest(
 	)
 end
 
+--[[
+    Creates a new LuauExecutionTask for the provided universe ID and place ID.
+    The created task runs on the provided version of the place.
+]]
+function luau_execute.create_task_versioned(
+	universe_id: string,
+	place_id: string,
+	version: string,
+	script: buffer | string,
+	timeout: number?,
+	enable_binary_output: boolean?,
+	binary_input: (buffer | string)?
+): LuauExecutionTask
+	timeout = timeout or MAX_EXECUTION_TIME
+	if timeout < 1 or timeout > MAX_EXECUTION_TIME then
+		error(`specified timeout is outside of acceptable range [1, {MAX_EXECUTION_TIME}]`)
+	end
+	if type(script) == "buffer" then
+		script = buffer.tostring(script)
+	end
+
+	local input_path
+	if binary_input then
+		input_path = upload_input(binary_input, universe_id)
+	end
+
+	return make_task(
+		string.format(TASK_CREATE_VERSIONED, universe_id, place_id, version),
+		script :: string,
+		timeout :: number,
+		enable_binary_output,
+		input_path
+	)
+end
+
+--[[
+	Returns the current status of the provided task. If this is `PROCESSING`,
+	the task is not yet done.
+]]
 function luau_execute.check_status(task: LuauExecutionTask): LuauTaskState
 	return query_status(task).state
 end
 
+--[[
+	Yields until the provided task has been finished.
+
+	When the task is done, returns whether it completed successfully
+	as a boolean where `true` indicates success.
+]]
 function luau_execute.await_finish(task: LuauExecutionTask, timeout: number?): boolean
 	timeout = timeout or MAX_EXECUTION_TIME
 	local task_lib = require("@lune/task")
@@ -300,6 +347,10 @@ function luau_execute.await_finish(task: LuauExecutionTask, timeout: number?): b
 	return (status :: LuauTaskState) == "COMPLETE"
 end
 
+--[[
+	Gets a list of logs from the provided task. The returned array is
+	just a list of literal strings emitted, without any data on what type.
+]]
 function luau_execute.get_flat_logs(task: LuauExecutionTask): { string }
 	local logs = get_logs(task, "FLAT")
 
@@ -307,6 +358,10 @@ function luau_execute.get_flat_logs(task: LuauExecutionTask): { string }
 	return logs.luauExecutionSessionTaskLogs[1].messages
 end
 
+--[[
+	Gets structured log data from the provided task. The returned array
+	contains data on what type a log is and when it was created.
+]]
 function luau_execute.get_structured_logs(task: LuauExecutionTask): { StructuredLog }
 	local logs = get_logs(task, "STRUCTURED")
 
@@ -314,6 +369,12 @@ function luau_execute.get_structured_logs(task: LuauExecutionTask): { Structured
 	return logs.luauExecutionSessionTaskLogs[1].structuredMessages
 end
 
+--[[
+	Returns the binary output returned by the provided task, if it exists.
+
+	This function will error if binary output was not enabled when creating
+	the task.
+]]
 function luau_execute.get_binary_output(task: LuauExecutionTask): buffer
 	local status = query_status(task)
 	local result = net.request({
@@ -338,6 +399,12 @@ function luau_execute.get_binary_output(task: LuauExecutionTask): buffer
 	return buffer.fromstring(result.body)
 end
 
+--[[
+	Gets the output from the provided task. These are the values returned
+	by the script.
+
+	Only values that survive a JSON roundtrip will be returned.
+]]
 function luau_execute.get_output(task: LuauExecutionTask): { unknown }
 	local status = query_status(task)
 	if not status.output then
@@ -347,11 +414,33 @@ function luau_execute.get_output(task: LuauExecutionTask): { unknown }
 	end
 end
 
-function luau_execute.set_api_key(api_key: buffer | string)
+--[[
+	Returns the session ID for the provided task.
+]]
+function luau_execute.session_id(task: LuauExecutionTask): string
+	local _, session_id = string.match(task.path, ID_PATTERN)
+	return session_id
+end
+
+--[[
+	Returns the task Id for the provided task.
+]]
+function luau_execute.task_id(task: LuauExecutionTask): string
+	local task_id, _ = string.match(task.path, ID_PATTERN)
+	return task_id
+end
+
+--[[
+	Sets the API key to use for web requests. If set, this will
+	override the API key read from the environment.
+]]
+function luau_execute.set_api_key(api_key: (buffer | string)?)
 	if type(api_key) == "buffer" then
 		api_key_override = buffer.tostring(api_key)
-	else
+	elseif type(api_key) == "string" then
 		api_key_override = api_key
+	else
+		api_key_override = nil
 	end
 end
 
