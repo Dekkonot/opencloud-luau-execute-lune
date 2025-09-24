@@ -19,7 +19,7 @@ local TASK_CREATE_LATEST = `{BASE_URL}/universes/%s/places/%s/luau-execution-ses
 local TASK_CREATE_VERSIONED = `{BASE_URL}/universes/%s/places/%s/versions/%s/luau-execution-session-tasks`
 local BINARY_INPUT_CREATE = `{BASE_URL}/universes/%s/luau-execution-session-task-binary-inputs`
 
-local USER_AGENT = `Dekkonot/Lune-OpenCloud-Execution 0.0.0; {_VERSION}`
+local USER_AGENT = `Dekkonot/Lune-OpenCloud-Execution 1.0.0; {_VERSION}`
 
 local RATE_LIMIT_HEADER = "x-ratelimit-reset"
 
