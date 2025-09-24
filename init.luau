@@ -40,13 +40,25 @@ local function api_key(): string
 	end
 end
 
+--[[
+	Represents the state of a Luau execution task.
+	In general, `STATE_UNSPECIFIED` should never occur.
+]]
 export type LuauTaskState = "STATE_UNSPECIFIED" | "QUEUED" | "PROCESSING" | "CANCELLED" | "COMPLETE" | "FAILED"
 
+--[[
+	Represents a Luau execution task.
+	A table of this structure should be passed to functions in this module.
+]]
 export type LuauExecutionTask = {
+	--- The internal resource path for this task.
 	path: string,
+	--- The user ID of the user that created this task.
 	user: string,
+	--- The state of the task. This will only update when a new task object
+	--- is returned after using `query_status`.
 	state: LuauTaskState,
-	script: string,
+	--- The timeout of the task, specified in seconds.
 	timeout: string,
 
 	--- The path to the binary input used for this task, if one was provided.
@@ -58,18 +70,39 @@ export type LuauExecutionTask = {
 
 	-- Not available upon creation, only querying
 
+	--- The time the task was created, formatted as an RFC 3339 timestamp.
 	createTime: string?,
+	--- The time the task was last updated (e.g. status changed), formatted as an RFC 3339 timestamp.
 	updateTime: string?,
 	output: {
 		results: { unknown },
 	}?,
+	error: TaskError?,
+	script: string?,
 }
 
+--[[
+	Represents one of the types that a log from Roblox can be.
+
+	- `OUTPUT` is a standard message (e.g. from `print`)
+	- `WARNING` is a warning (e.g. from `warn`)
+	- `ERROR` is an error (e.g. from `error`)
+	- `INFO` is the blue text that shows up in Studio's output
+	- `MESSAGE_TYPE_UNSPECIFIED` should never occur
+]]
 export type MessageType = "MESSAGE_TYPE_UNSPECIFIED" | "OUTPUT" | "INFO" | "WARNING" | "ERROR"
 
+--[[
+	Represents a structured log from Roblox. 
+	This includes the log message itself along with the type and the time it
+	was sent.
+]]
 export type StructuredLog = {
+	--- This log's message
 	message: string,
+	--- The time that the log was emitted, as an RFC 3339 timestamp
 	createTime: string,
+	--- The type that this log is
 	messageType: MessageType,
 }
 
@@ -82,6 +115,32 @@ type LuauExecutionSessionTaskLogs = {
 		}
 	},
 	nextPageToken: string,
+}
+
+--[[
+	Represents one of the types of errors that a task can run into.
+
+	- `SCRIPT_ERROR` - The task's script raised an unhandled error.
+	- `DEADLINE_EXCEEDED` - The task exceeded the maximum allowed execution duration.
+	- `OUTPUT_SIZE_LIMIT_EXCEEDED` - The task's outputs were too large.
+	- `INTERNAL_ERROR` - The Task failed due to an internal system error.
+	- `ERROR_CODE_UNSPECIFIED` - Should never occur
+]]
+export type TaskErrorType =
+	| "ERROR_CODE_UNSPECIFIED"
+	| "SCRIPT_ERROR"
+	| "DEADLINE_EXCEEDED"
+	| "OUTPUT_SIZE_LIMIT_EXCEEDED"
+	| "INTERNAL_ERROR"
+
+--[[
+	Represents an error that a task ran into.
+]]
+export type TaskError = {
+	--- What type of error occured
+	code: TaskErrorType,
+	--- A message providing more information about the error that occured.
+	message: string,
 }
 
 --- A response from uploading a binary input
@@ -122,7 +181,6 @@ function upload_input(input: buffer | string, universe_id: string): string
 		end
 	end
 	local response: InputUploadResponse = serde.decode("json", result.body)
-	print(response)
 
 	local result_2 = net.request({
 		method = "PUT",
@@ -397,6 +455,21 @@ function luau_execute.get_binary_output(task: LuauExecutionTask): buffer
 	end
 
 	return buffer.fromstring(result.body)
+end
+
+--[[
+	Returns the error for the provided task, if one exists. This function will
+	return `nil` if the task did not error. 
+]]
+function luau_execute.get_error(task: LuauExecutionTask): TaskError?
+	local status = query_status(task)
+	if status.state ~= "PROCESSING" then
+		return status.error
+	else
+		luau_execute.await_finish(task)
+		status = query_status(task)
+		return status.error
+	end
 end
 
 --[[
